@@ -306,7 +306,7 @@ class Case:
         ]
     ],
 )
-@pytest.mark.parametrize("block_m", [64, 128])
+@pytest.mark.parametrize("block_m", [16, 128])
 @pytest.mark.parametrize("do_gather, do_scatter, inner_expt_opt", [
     (False, False, None),
     (True, False, None),
@@ -317,8 +317,8 @@ class Case:
     (False, False, "pad_w"),
     (False, False, "pad_x"),
 ])
-@pytest.mark.parametrize("has_y_gammas", [False])
-@pytest.mark.parametrize("is_persistent", [True])
+@pytest.mark.parametrize("has_y_gammas", [False, True])
+@pytest.mark.parametrize("is_persistent", [False, True])
 def test_op(m, n, k, split_k, do_gather, do_scatter, inner_expt_opt, has_y_gammas, is_persistent, n_expts_tot,
             n_expts_act, mode, act_dtype_str, weight_dtype_str, block_m, w_hbm_swizzling, x_hbm_swizzling, colmajor_mxfp_weight, epilogue_subtile,
             x_transpose, w_transpose, y_transpose,

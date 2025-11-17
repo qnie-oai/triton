@@ -195,12 +195,12 @@ def make_default_opt_flags_nvidia(
     group_m = 8
     xcd_swizzle = 1
     # block_m
-    block_m, block_m_tma = opt_flags_nvidia.compute_block_m(m, constraints, enforce_bitwise_invariance, tokens_per_expt, routing_data, lhs_dtype, rhs_dtype, precision_config)
+    block_m = opt_flags_nvidia.compute_block_m(m, constraints, enforce_bitwise_invariance, tokens_per_expt, routing_data, lhs_dtype, rhs_dtype, precision_config)
     # block n
     arch = None
     block_n, block_n_tma = opt_flags_nvidia.compute_block_n(n, arch, precision_config)
     # is_persistent
-    grid_size_tma = opt_flags_nvidia.compute_grid_size(routing_data, batch_size, m, n, block_m_tma, block_n_tma)
+    grid_size_tma = opt_flags_nvidia.compute_grid_size(routing_data, batch_size, m, n, block_m, block_n_tma)
     n_sms = torch.cuda.get_device_properties(0).multi_processor_count
     tiles_per_sm = grid_size_tma / n_sms
     supports_persistent = can_use_persistent_tma and (arch is None or int(arch[2:-1]) >= 9)
@@ -217,7 +217,6 @@ def make_default_opt_flags_nvidia(
         if m * n * k < 131072:
             is_persistent = False
     block_n = block_n_tma if is_persistent else block_n
-    block_m = block_m_tma if is_persistent else block_m
     # block k
     block_k = opt_flags_nvidia.compute_block_k(m, k, is_persistent, lhs_dtype, rhs_dtype, precision_config, has_y_acc_in)
     if block_n == 256 and block_k == 128 and block_m <= 64 and is_persistent and rhs_dtype == FP4 and k >= 4096 and tokens_per_expt > 1 and lhs_dtype != torch.bfloat16:
