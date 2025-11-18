@@ -122,15 +122,16 @@ def _load_tile_attrs(
         k_tiles = tl.cdiv(K - off_k_x, BLOCK_K * SPLIT_K)
         if ExptData is None:
             tl.static_assert(M is not None)
-            expt_id, pid_z, pid_z_out, start_m, block_id, eM = pid_e, pid_e, pid_e, 0, pid_m, M
+            expt_id, pid_z, pid_z_out, start_m, start_m_block, block_id, eM = pid_e, pid_e, pid_e, 0, 0, pid_m, M
         else:
             tl.static_assert(M is None)
-            expt_data = tl.load(ExptData + pid_m)
+            expt_data = tl.load(ExptData + pid_m) # index the M block across ragged dimension
             expt_id = expt_data & 0x0000FFFF
             block_id = expt_data >> 16
             eM = tl.load(ExptHist + expt_id)
-            start_m = tl.load(ExptOffs + expt_id)
+            start_m = tl.load(ExptOffs + expt_id) # have a ExptOffsPadded
             pid_z, pid_z_out = 0, 0
+            start_m_block = tl.load(ExptTileOffs + expt_id)
 
     off_m = BLOCK_M * block_id
 
@@ -139,6 +140,7 @@ def _load_tile_attrs(
         pid_z,
         pid_z_out,
         start_m,
+        start_m_block,
         eM,
         off_m,
         pid_n,
