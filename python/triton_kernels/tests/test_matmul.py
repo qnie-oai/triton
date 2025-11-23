@@ -617,13 +617,6 @@ def _test_op(m, n, k, split_k, do_gather, do_scatter, inner_expt_opt, has_y_gamm
 
     # triton
     try:
-        print(f"Jade debugging ***************************")
-        print(f"x tri shape: {x_tri.shape}")
-        print(f"w tri shape: {w_tri.shape}")
-        print(f"rdata: {rdata}")
-        print(f"gindx: {gindx}")
-        print(f"sindx: {sindx}")
-        print(f"precision opt: {precision_opt}")
         tri_y = matmul_ogs(x_tri, w_tri, bias_tri, rdata, gindx, sindx, precision_opt,
                            gammas=gs1_ref, epilogue=epilogue, y=y_tri_in,
                            inner_routing_data=inner_routing_data)
