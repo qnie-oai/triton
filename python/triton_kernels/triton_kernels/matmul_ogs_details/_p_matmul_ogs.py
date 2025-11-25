@@ -212,7 +212,7 @@ def _p_matmul_ogs(
     DISALLOW_ACC_MULTI_BUFFER: tl.constexpr = is_w_microscaled and BLOCK_M * BLOCK_N >= 128 * 256
 
     for tile_id in tl.range(tl.program_id(0), num_tiles, NUM_SMS, flatten=True, disallow_acc_multi_buffer=DISALLOW_ACC_MULTI_BUFFER, warp_specialize=True):
-        expt_id, start_z, start_z_out, start_m, eM, off_m, pid_n, k_tiles, pid_k, off_k_x0, off_k_w0, _ = _load_tile_attrs(
+        expt_id, start_z, start_z_out, start_m, start_m_block, eM, off_m, pid_n, k_tiles, pid_k, off_k_x0, off_k_w0, _ = _load_tile_attrs(
             tile_id, num_tiles, grid_m - padding_m, grid_n,
             M, K, ExptData, ExptHist, ExptOffs, ExptTileOffs,
             EXPT_IS_INNER, X_IS_PADDED, W_IS_PADDED,
@@ -313,7 +313,12 @@ def _p_matmul_ogs(
                         mask_m = off_m + tl.arange(0, BLOCK_M) < eM
                         x_scales = tl.load(XMxScalePtrs, mask=mask_k_scale[None, :] & mask_m[:, None], other=0.0)
                     else: # use TMA for x scale load - only cover batched case for now
-                        off_m_scale = start_z * ((M + 127) // 128) + off_m // 128
+                        if X_TMA_MODE == "dense":
+                            off_m_scale = start_z * ((M + 127) // 128) + off_m // 128
+                        else:
+                            # x block is offset based on start_m and off_m
+                            # need to index the right x scale block
+                            off_m_scale = start_m_block + off_m // 128
 
                         x_scales = XMxScale.load([0, off_m_scale, off_k_x // MX_PACK_DIVISOR // 4, 0, 0]) # loaded block size is [1, BLOCK_M//128, BLOCK_K//32//4, 2, 256]
                         x_scales = unswizzle_act_mx_scale_bw(x_scales)
@@ -347,7 +352,7 @@ def _p_matmul_ogs(
 
         if INDEPENDENT_EPILOGUE:
             tile_id1 += NUM_SMS
-            expt_id1, _, start_z1, start_m1, eM1, off_m1, pid_n1, _, pid_k1, _, _, _ = _load_tile_attrs(
+            expt_id1, _, start_z1, start_m1, start_m_block1, eM1, off_m1, pid_n1, _, pid_k1, _, _, _ = _load_tile_attrs(
                 tile_id1, num_tiles, grid_m - padding_m, grid_n,
                 M, K, ExptData, ExptHist, ExptOffs, ExptTileOffs,
                 EXPT_IS_INNER, X_IS_PADDED, W_IS_PADDED,
@@ -355,7 +360,7 @@ def _p_matmul_ogs(
                 GROUP_M, XCD_SWIZZLE, SWIZZLE_MX_VALUE)
             off_n1 = pid_n1 * BLOCK_N
         else:
-            tile_id1, expt_id1, start_z1, start_m1, eM1 = tile_id, expt_id, start_z_out, start_m, eM
+            tile_id1, expt_id1, start_z1, start_m1, start_m_block1, eM1 = tile_id, expt_id, start_z_out, start_m, start_m_block, eM
             off_m1, off_n1, pid_k1 = off_m, off_n, pid_k
 
         offs_m = off_m1 + tl.arange(0, BLOCK_M)
