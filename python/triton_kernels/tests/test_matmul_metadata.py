@@ -1,5 +1,10 @@
+import json
+
 import pytest
 import torch
+import triton
+import triton.language as tl
+import triton.profiler as proton
 
 from triton_kernels.matmul_details._common import _matmul_flops_and_bytes_from_slices, matmul_launch_metadata
 from triton_kernels.proton_opts import set_launch_metadata_allow_sync
@@ -8,6 +13,30 @@ from triton_kernels.proton_opts import set_launch_metadata_allow_sync
 class _Kernel:
     name = "_p_matmul_test"
     num_stages = 4
+
+
+@triton.jit(launch_metadata=matmul_launch_metadata)
+def _matmul_metadata_probe(
+    YPtr,
+    XPtr,
+    WPtr,
+    XSliceSizes,
+    OutAcc,
+    M: tl.constexpr,
+    N: tl.constexpr,
+    K: tl.constexpr,
+    RAGGED_DIMENSION: tl.constexpr,
+    X_EXPECTED_SLICE_SIZE: tl.constexpr,
+    batch_size: tl.constexpr,
+    EPILOGUE_SUBTILE: tl.constexpr,
+):
+    tl.store(YPtr, tl.load(XPtr))
+
+
+def _walk_profile(node):
+    yield node
+    for child in node["children"]:
+        yield from _walk_profile(child)
 
 
 def _old_flops_and_bytes(args, M, N, K, X, Y, W, slice_sizes, nbits, batch_size):
@@ -112,3 +141,74 @@ def test_matmul_launch_metadata_nosync_matches_old_formula(case):
     torch.testing.assert_close(direct_actual["bytes"].cpu(), expected["bytes"].to(torch.int64).cpu(), rtol=0, atol=0)
     torch.testing.assert_close(actual[f"flops{nbits}"].cpu(), expected[f"flops{nbits}"].cpu(), rtol=0, atol=0)
     torch.testing.assert_close(actual["bytes"].cpu(), expected["bytes"].to(torch.int64).cpu(), rtol=0, atol=0)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA graph capture is required")
+def test_matmul_launch_metadata_nosync_proton_cudagraph(tmp_path, device):
+    if not str(device).startswith("cuda"):
+        pytest.skip("CUDA device is required")
+
+    device = torch.device(device)
+    slice_sizes = torch.tensor([7, 0, 13, 4, 1], dtype=torch.int32, device=device)
+    x = torch.empty((40, 8), dtype=torch.float16, device=device)
+    y = torch.empty((40, 16), dtype=torch.float16, device=device)
+    w = torch.empty((slice_sizes.numel(), 8, 16), dtype=torch.float16, device=device)
+
+    temp_file = tmp_path / "test_matmul_metadata_nosync_cudagraph.hatchet"
+    session = proton.start(str(temp_file.with_suffix("")), context="shadow", hook="triton")
+    try:
+        set_launch_metadata_allow_sync(False)
+
+        _matmul_metadata_probe[(1, )](
+            y,
+            x,
+            w,
+            slice_sizes,
+            y,
+            M=None,
+            N=16,
+            K=8,
+            RAGGED_DIMENSION="M",
+            X_EXPECTED_SLICE_SIZE=None,
+            batch_size=2,
+            EPILOGUE_SUBTILE=None,
+            num_warps=1,
+        )
+        torch.cuda.synchronize(device)
+
+        graph = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(graph):
+            _matmul_metadata_probe[(1, )](
+                y,
+                x,
+                w,
+                slice_sizes,
+                y,
+                M=None,
+                N=16,
+                K=8,
+                RAGGED_DIMENSION="M",
+                X_EXPECTED_SLICE_SIZE=None,
+                batch_size=2,
+                EPILOGUE_SUBTILE=None,
+                num_warps=1,
+            )
+
+        with proton.scope("replay"):
+            graph.replay()
+        torch.cuda.synchronize(device)
+    finally:
+        set_launch_metadata_allow_sync(True)
+        proton.finalize(session)
+
+    with temp_file.open() as f:
+        data = json.load(f)
+
+    frames = list(_walk_profile(data[0]))
+    assert any("_matmul_flops_and_bytes_from_slices_kernel" in frame["frame"]["name"] for frame in frames)
+    assert any(
+        "_matmul_metadata_probe" in frame["frame"]["name"]
+        and "flops16" in frame["metrics"]
+        and "bytes" in frame["metrics"]
+        for frame in frames
+    )
