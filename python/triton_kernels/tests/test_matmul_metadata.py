@@ -85,6 +85,11 @@ def _metadata_args(*, ragged_dimension, M, N, K, X, Y, W, slice_sizes, batch_siz
     ],
 )
 def test_matmul_launch_metadata_nosync_matches_old_formula(case):
+    """Unit-test the no-sync ragged matmul metadata counters.
+
+    This validates the helper kernel math and dtype normalization without
+    involving Proton hooks or CUDA graph capture.
+    """
     device = torch.device("cuda")
     slice_sizes = torch.tensor([7, 0, 13, 4, 1], dtype=torch.int32, device=device)
     nbits = 16
@@ -145,6 +150,13 @@ def test_matmul_launch_metadata_nosync_matches_old_formula(case):
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA graph capture is required")
 def test_matmul_launch_metadata_nosync_proton_cudagraph(tmp_path, device):
+    """Downstream triton_kernels repro for Proton hook plus CUDA graph capture.
+
+    matmul_launch_metadata runs with no-sync counters, so metadata evaluation
+    launches _matmul_flops_and_bytes_from_slices_kernel and returns tensor
+    metrics. Under Proton hook + CUDA graph capture/replay, this exercises the
+    real path where metadata graph nodes must not be mistaken for metric nodes.
+    """
     if not str(device).startswith("cuda"):
         pytest.skip("CUDA device is required")
 
